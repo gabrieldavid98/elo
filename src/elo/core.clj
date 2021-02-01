@@ -66,20 +66,29 @@
                          :loser_sets_won sc/->int
                          :winner_games_won sc/->int
                          :loser_games_won sc/->int})
-          (reduce (fn [{:keys [players] :as acc} {:keys [:winner_name :winner_slug
-                                                         :loser_name :loser_slug] :as match}]
+          (reduce (fn [{:keys [players] :as acc} 
+                       {:keys [:winner_name :winner_slug
+                               :loser_name :loser_slug] :as match}]
                     (let [winner-rating (get players winner_slug 400)
                           loser-rating (get players loser_slug 400)
-                          winner-probability (match-probability winner-rating loser-rating)
+                          winner-probability (match-probability winner-rating 
+                                                                loser-rating)
                           loser-probability (- 1 winner-probability)]
                       
                       (-> acc
-                          (assoc-in [:players winner_slug] (recalculate-rating k winner-rating winner-probability 1))
-                          (assoc-in [:players loser_slug] (recalculate-rating k loser-rating loser-probability 0))
-                          (update :matches (fn [ms]
-                                             (conj ms (assoc match
-                                                             :winner_rating winner-rating
-                                                             :loser_rating loser-rating)))))))
+                          (assoc-in [:players winner_slug] 
+                                    (recalculate-rating k
+                                                        winner-rating 
+                                                        winner-probability 1))
+                          (assoc-in [:players loser_slug] 
+                                    (recalculate-rating k
+                                                        loser-rating
+                                                        loser-probability 0))
+                          (update :matches 
+                                  (fn [ms]
+                                    (conj ms (assoc match
+                                                    :winner_rating winner-rating
+                                                    :loser_rating loser-rating)))))))
                   {:players {}
                    :matches []})
           :matches
@@ -94,7 +103,52 @@
      (empty? m) '()
      (player-in-match? (first m) player-slug) 
      (cons (first m)
-           (cons [(match-tree-by-player (rest m) (:winner (first m)))
-                  (match-tree-by-player (rest m) (:loser (first m)))]
+           (cons [(match-tree-by-player (rest m) (:winner_slug (first m)))
+                  (match-tree-by-player (rest m) (:loser_slug (first m)))]
                  '()))
      :else (match-tree-by-player (rest m) player-slug))))
+
+(defn take-matches [limit tree f]
+  (cond (zero? limit) '()
+        (= 1 limit) (f (first tree))
+        :else (cons (f (first tree))
+                    (cons [(take-matches (dec limit) (first (second tree)) f)
+                           (take-matches (dec limit) (second (second tree)) f)]
+                          '()))))
+
+(defn matches-with-ratings [limit tree]
+  (take-matches limit tree
+                (fn [match]
+                  (-> match
+                      (update :winner_rating int)
+                      (update :loser_rating int)
+                      (select-keys [:winner_name
+                                    :loser_name
+                                    :winner_rating
+                                    :loser_rating])
+                      (assoc :winner_probability_percentage
+                             (->> (match-probability (:winner_rating match)
+                                                     (:loser_rating match))
+                                  (* 100)
+                                  int))))))
+
+(defn focus-history [tree player-slug focus-depth opponent-depth f]
+  (cond (zero? focus-depth) '()
+        (= 1 focus-depth) (f (first tree))
+        :else
+        (cons (f (first tree))
+              (cons [(if (player-in-match? (ffirst (second tree)) player-slug)
+                       (focus-history (first (second tree))
+                                      player-slug
+                                      (dec focus-depth)
+                                      opponent-depth
+                                      f)
+                       (take-matches opponent-depth (first (second tree)) f))
+                     (if (player-in-match? (first (second (second tree))) player-slug)
+                       (focus-history (second (second tree))
+                                      player-slug
+                                      (dec focus-depth)
+                                      opponent-depth
+                                      f)
+                       (take-matches opponent-depth (second (second tree)) f))]
+                    '()))))
